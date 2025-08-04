@@ -22,7 +22,7 @@ def resource_path(relative_path):
 
 def run_powershell(command):
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
+        ["powershell", "-NoProfile","-WindowStyle", "Hidden","-NoProfile", "-Command", command],
         capture_output=True, text=True
     )
     return result
