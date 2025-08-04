@@ -1,8 +1,6 @@
 import tkinter as tk
 import subprocess
 
-GPU_INSTANCE_ID = r"PCI\VEN_8086&DEV_5693&SUBSYS_138F1462&REV_05\6&2EA43C3F&0&00080008"
-
 def run_powershell(command):
     result = subprocess.run(
         ["powershell", "-NoProfile", "-Command", command],
@@ -10,46 +8,96 @@ def run_powershell(command):
     )
     return result
 
+def get_display_adapters():
+    """Fetch all GPUs with their name and instance ID"""
+    command = """
+    Get-PnpDevice -Class Display | 
+    Where-Object { $_.InstanceId -ne $null } |
+    Select-Object -Property FriendlyName, InstanceId |
+    ConvertTo-Json
+    """
+    result = run_powershell(command)
+    try:
+        import json
+        parsed = json.loads(result.stdout)
+        return parsed if isinstance(parsed, list) else [parsed]
+    except Exception as e:
+        return []
+
 def get_gpu_status(instance_id):
     try:
         result = run_powershell(f"(Get-PnpDevice -InstanceId '{instance_id}').Status")
         code = result.stdout.strip()
-        if code == "OK":
-            return "ENABLED ✅"
-        else:
-           return "DISABLED ❌"
+        return "ENABLED ✅" if code == "OK" else "DISABLED ❌"
     except Exception as e:
         return f"ERROR: {e}"
 
 def refresh_status():
-    status_var.set(get_gpu_status(GPU_INSTANCE_ID))
+    selected = selected_gpu.get()
+    instance_id = gpu_map.get(selected)
+    if not instance_id:
+        status_var.set("No GPU Selected ❌")
+        return
+    status_var.set(get_gpu_status(instance_id))
+    if "ENABLED" in status_var.get():
+        toggle_var.set("enable")
+    elif "DISABLED" in status_var.get():
+        toggle_var.set("disable")
 
-def disable_gpu():
-    result = run_powershell(f'Disable-PnpDevice -InstanceId "{GPU_INSTANCE_ID}" -Confirm:$false')
-    output_text.set("❌ GPU Disabled!\n\n" + result.stdout + result.stderr)
+def toggle_gpu():
+    selected = selected_gpu.get()
+    instance_id = gpu_map.get(selected)
+    if not instance_id:
+        output_text.set("No GPU selected.")
+        return
+    choice = toggle_var.get()
+    if choice == "enable":
+        result = run_powershell(f'Enable-PnpDevice -InstanceId "{instance_id}" -Confirm:$false')
+        output_text.set("✅ GPU Enabled!\n\n" + result.stdout + result.stderr)
+    elif choice == "disable":
+        result = run_powershell(f'Disable-PnpDevice -InstanceId "{instance_id}" -Confirm:$false')
+        output_text.set("❌ GPU Disabled!\n\n" + result.stdout + result.stderr)
     refresh_status()
 
-def enable_gpu():
-    result = run_powershell(f'Enable-PnpDevice -InstanceId "{GPU_INSTANCE_ID}" -Confirm:$false')
-    output_text.set("✅ GPU Enabled!\n\n" + result.stdout + result.stderr)
-    refresh_status()
+# Init
+gpus = get_display_adapters()
+gpu_map = {gpu["FriendlyName"]: gpu["InstanceId"] for gpu in gpus}
 
 # GUI Setup
 root = tk.Tk()
-root.title("GPU Toggle Switch")
-root.geometry("450x350")
+root.title("Dynamic GPU Toggle Switch")
+root.geometry("500x400")
 
+selected_gpu = tk.StringVar()
+selected_gpu.set(next(iter(gpu_map), "No GPU Found"))
+
+toggle_var = tk.StringVar()
 status_var = tk.StringVar()
-status_var.set(get_gpu_status(GPU_INSTANCE_ID))
-
-tk.Label(root, text="Intel Arc A370M Status", font=("Arial", 16)).pack(pady=10)
-tk.Label(root, textvariable=status_var, font=("Arial", 16)).pack(pady=5)
-
-tk.Button(root, text="❌ Disable GPU", command=disable_gpu, bg="red", fg="white", width=30).pack(pady=10)
-tk.Button(root, text="✅ Enable GPU", command=enable_gpu, bg="green", fg="white", width=30).pack(pady=10)
-tk.Button(root, text="🔄 Refresh Status", command=refresh_status, bg="gray", fg="white", width=30).pack(pady=10)
-
 output_text = tk.StringVar()
-tk.Label(root, textvariable=output_text, wraplength=400, justify="left", font=("Courier", 10)).pack(pady=10)
+
+def on_gpu_select(*args):
+    refresh_status()
+
+selected_gpu.trace("w", on_gpu_select)
+
+tk.Label(root, text="🖥️ Select Your GPU", font=("Arial", 14)).pack(pady=10)
+tk.OptionMenu(root, selected_gpu, *gpu_map.keys()).pack(pady=5)
+
+tk.Label(root, textvariable=status_var, font=("Arial", 14)).pack(pady=5)
+
+# Radio buttons
+radio_frame = tk.Frame(root)
+radio_frame.pack(pady=10)
+
+tk.Radiobutton(radio_frame, text="✅ Enable GPU", variable=toggle_var, value="enable",
+               command=toggle_gpu, bg="green", fg="white", indicatoron=0, width=30).pack(pady=5)
+
+tk.Radiobutton(radio_frame, text="❌ Disable GPU", variable=toggle_var, value="disable",
+               command=toggle_gpu, bg="red", fg="white", indicatoron=0, width=30).pack(pady=5)
+
+tk.Button(root, text="🔄 Refresh Status", command=refresh_status, bg="gray", fg="white", width=30).pack(pady=10)
+tk.Label(root, textvariable=output_text, wraplength=450, justify="left", font=("Courier", 10)).pack(pady=10)
+
+refresh_status()
 
 root.mainloop()
